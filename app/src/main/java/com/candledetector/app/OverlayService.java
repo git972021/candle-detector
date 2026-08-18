@@ -38,12 +38,32 @@ public class OverlayService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForegroundNotif();
+
+        if (intent == null) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
         int code = intent.getIntExtra("code", 0);
         Intent data = intent.getParcelableExtra("data");
         MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        if (mpm == null) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         projection = mpm.getMediaProjection(code, data);
+        if (projection == null) {
+            // No projection available (user didn't grant permission); stop service
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
         DisplayMetrics dm = new DisplayMetrics();
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (wm == null) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         wm.getDefaultDisplay().getRealMetrics(dm);
         width = dm.widthPixels; height = dm.heightPixels; density = dm.densityDpi;
         showOverlay();
@@ -52,13 +72,20 @@ public class OverlayService extends Service {
 
     private void startForegroundNotif() {
         String ch = "candle_svc";
+        Notification n;
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel c = new NotificationChannel(ch, "Detector", NotificationManager.IMPORTANCE_LOW);
             ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(c);
+            Notification.Builder nb = new Notification.Builder(this, ch)
+                    .setContentTitle("Candle Detector Running")
+                    .setSmallIcon(android.R.drawable.ic_menu_camera);
+            n = nb.build();
+        } else {
+            Notification.Builder nb = new Notification.Builder(this)
+                    .setContentTitle("Candle Detector Running")
+                    .setSmallIcon(android.R.drawable.ic_menu_camera);
+            n = nb.build();
         }
-        Notification n = new Notification.Builder(this, ch)
-                .setContentTitle("Candle Detector Running")
-                .setSmallIcon(android.R.drawable.ic_menu_camera).build();
         startForeground(1, n);
     }
 
@@ -75,7 +102,7 @@ public class OverlayService extends Service {
         btnClose.setOnClickListener(v -> stopSelf());
 
         btnAuto.setOnClickListener(v -> {
-            autoMode = autoMode;
+            autoMode = !autoMode;
             btnAuto.setText(autoMode ? "AUTO: ON" : "AUTO: OFF");
             if (autoMode) startAutoScan();
             else stopAutoScan();
@@ -130,10 +157,18 @@ public class OverlayService extends Service {
     }
 
     private void stopAutoScan() {
-        if (autoRunnable = null) handler.removeCallbacks(autoRunnable);
+        if (autoRunnable != null) {
+            handler.removeCallbacks(autoRunnable);
+            autoRunnable = null;
+        }
     }
 
     private void captureAndAnalyze() {
+        if (projection == null) {
+            resultTxt.setText("No projection");
+            return;
+        }
+
         statusTxt.setText("Scanning...");
         final ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
         final VirtualDisplay vd = projection.createVirtualDisplay("cap",
@@ -145,7 +180,7 @@ public class OverlayService extends Service {
             try {
                 Image image = reader.acquireLatestImage();
                 overlay.setVisibility(View.VISIBLE);
-                if (image = null) {
+                if (image != null) {
                     Bitmap bmp = imageToBitmap(image);
                     image.close();
                     analyze(bmp);
@@ -188,20 +223,23 @@ public class OverlayService extends Service {
         }
         overlay.setBackgroundColor(color);
         resultTxt.setText("Candles: " + candles.size() + "\nCRT: " + crt + "\n1234: " + trend);
-        statusTxt.setText(signal);
-        if (signal.equals(lastSignal)) alertUser();
+        // Alert only when the signal changes and is not NONE
+        if (!signal.equals(lastSignal) && !signal.equals("NONE")) alertUser();
         lastSignal = signal;
+        statusTxt.setText(signal);
     }
 
     private void alertUser() {
         try {
             Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-            if (Build.VERSION.SDK_INT >= 26)
-                v.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE));
-            else v.vibrate(500);
+            if (v != null) {
+                if (Build.VERSION.SDK_INT >= 26)
+                    v.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE));
+                else v.vibrate(500);
+            }
             Uri notif = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
             android.media.Ringtone r = RingtoneManager.getRingtone(this, notif);
-            r.play();
+            if (r != null) r.play();
         } catch (Exception ignored) {}
     }
 
@@ -223,7 +261,7 @@ public class OverlayService extends Service {
                     bot = y;
                 }
             }
-            if (top = -1 && (bot - top) > 15) {
+            if (top != -1 && bot - top > 15) {
                 if (x - lastX > 6) {
                     Candle c = new Candle();
                     c.x = x; c.top = top; c.bottom = bot; c.green = isGreen;
@@ -239,7 +277,7 @@ public class OverlayService extends Service {
         if (c.size() < 2) return "Low data";
         for (int i = c.size() - 2; i >= Math.max(0, c.size() - 5); i--) {
             Candle c1 = c.get(i), c2 = c.get(i + 1);
-            if (c1.green = c2.green) {
+            if (c1.green == c2.green) {
                 boolean sweep = (c2.top < c1.top) || (c2.bottom > c1.bottom);
                 if (sweep) return c2.green ? "BUY" : "SELL";
             }
@@ -251,7 +289,7 @@ public class OverlayService extends Service {
         if (c.size() < 3) return "Low data";
         for (int i = c.size() - 3; i >= Math.max(0, c.size() - 6); i--) {
             Candle c1 = c.get(i), c2 = c.get(i + 1), c3 = c.get(i + 2);
-            if (c1.green == c2.green && c2.green = c3.green)
+            if (c1.green == c2.green && c2.green == c3.green)
                 return c3.green ? "BUY" : "SELL";
         }
         return "No pattern";
@@ -261,7 +299,13 @@ public class OverlayService extends Service {
     public void onDestroy() {
         super.onDestroy();
         stopAutoScan();
-        if (overlay = null) wm.removeView(overlay);
-        if (projection = null) projection.stop();
+        if (overlay != null && wm != null) {
+            try { wm.removeView(overlay); } catch (Exception ignored) {}
+            overlay = null;
+        }
+        if (projection != null) {
+            try { projection.stop(); } catch (Exception ignored) {}
+            projection = null;
+        }
     }
 }
