@@ -22,14 +22,20 @@ public class MainActivity extends AppCompatActivity {
 
         Button start = findViewById(R.id.btnStart);
         start.setOnClickListener(v -> {
-            if (Settings.canDrawOverlays(this)) {
-                Toast.makeText(this, "Grant overlay permission", Toast.LENGTH_LONG).show();
+            // Request overlay permission if NOT already granted
+            if (!Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "Please grant overlay permission", Toast.LENGTH_LONG).show();
                 startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:" + getPackageName())));
                 return;
             }
+
             mpm = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_MP);
+            if (mpm != null) {
+                startActivityForResult(mpm.createScreenCaptureIntent(), REQ_MP);
+            } else {
+                Toast.makeText(this, "MediaProjection not available", Toast.LENGTH_SHORT).show();
+            }
         });
     }
 
